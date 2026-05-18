@@ -1570,6 +1570,10 @@ class AkshareFetcher(BaseFetcher):
             'sh000688': '科创50',
             'sh000016': '上证50',
             'sh000300': '沪深300',
+            'sh000905': '中证500',
+            'sh000852': '中证1000',
+            'sh000922': '中证红利',
+            'sh000510': '中证A500',
         }
 
         try:
@@ -1618,6 +1622,61 @@ class AkshareFetcher(BaseFetcher):
 
         except Exception as e:
             logger.error(f"[Akshare] 获取指数行情失败: {e}")
+            return None
+
+    def get_index_pe_ttm(self) -> Optional[Dict[str, float]]:
+        """
+        获取主要宽基指数 PE-TTM 估值数据（中证官网）
+
+        Returns:
+            Dict[str, float]: 指数代码 -> PE-TTM, e.g. {"000300": 12.5, "000905": 25.3}
+        """
+        import akshare as ak
+
+        # 中证指数代码映射
+        index_codes = {
+            "000300": "沪深300",
+            "000905": "中证500",
+            "000852": "中证1000",
+            "000922": "中证红利",
+            "000510": "中证A500",
+            "000001": "上证指数",
+            "399001": "深证成指",
+            "399006": "创业板指",
+            "000016": "上证50",
+            "000688": "科创50",
+        }
+
+        results: Dict[str, float] = {}
+        try:
+            self._set_random_user_agent()
+            self._enforce_rate_limit()
+            logger.info("[Akshare] 获取指数 PE-TTM 估值数据...")
+
+            for code in index_codes:
+                try:
+                    df = ak.index_value_hist_funddb(
+                        symbol=index_codes[code],
+                        indicator="市盈率",
+                        period="近一月",
+                    )
+                    if df is not None and not df.empty:
+                        # 取最新一行的市盈率
+                        pe_col = [c for c in df.columns if "市盈率" in c]
+                        if pe_col:
+                            latest_pe = safe_float(df.iloc[-1][pe_col[0]])
+                            if latest_pe and latest_pe > 0:
+                                results[code] = latest_pe
+                except Exception as e:
+                    logger.debug(f"[Akshare] 获取 {index_codes[code]} PE-TTM 失败: {e}")
+                    continue
+
+            if results:
+                logger.info(f"[Akshare] 获取到 {len(results)} 个指数 PE-TTM")
+            return results if results else None
+
+        except Exception as e:
+            logger.error(f"[Akshare] 获取指数 PE-TTM 失败: {e}")
             return None
 
     def get_market_stats(self) -> Optional[Dict[str, Any]]:
