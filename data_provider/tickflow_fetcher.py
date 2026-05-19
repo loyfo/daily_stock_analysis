@@ -41,6 +41,10 @@ _CN_MAIN_INDEX_QUOTES = (
     ("000688.SH", "000688", "科创50"),
     ("000016.SH", "000016", "上证50"),
     ("000300.SH", "000300", "沪深300"),
+    ("000905.SH", "000905", "中证500"),
+    ("000852.SH", "000852", "中证1000"),
+    ("000922.SH", "000922", "中证红利"),
+    ("000510.SH", "000510", "中证A500"),
 )
 _MAX_SYMBOLS_PER_QUOTE_REQUEST = 5
 _UNIVERSE_PERMISSION_NEGATIVE_CACHE_TTL_SECONDS = 900
@@ -235,7 +239,8 @@ class TickFlowFetcher(BaseFetcher):
                 }
             )
 
-        if len(results) != len(_CN_MAIN_INDEX_QUOTES):
+        # Require at least 6 core indices (上证/深证/创业板/科创50/上证50/沪深300)
+        if len(results) < 6:
             logger.warning(
                 "[TickFlowFetcher] 指数行情不完整: %s/%s",
                 len(results),

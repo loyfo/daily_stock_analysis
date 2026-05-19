@@ -92,6 +92,9 @@ class MarketOverview:
     top_sectors: List[Dict] = field(default_factory=list)     # 涨幅前5板块
     bottom_sectors: List[Dict] = field(default_factory=list)  # 跌幅前5板块
 
+    # 指数 PE-TTM 估值
+    index_pe_ttm: Dict[str, float] = field(default_factory=dict)  # 指数代码 -> PE-TTM
+
 
 class MarketAnalyzer:
     """
@@ -305,8 +308,12 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         # 3. 获取板块涨跌榜（A 股有，美股暂无）
         if self.profile.has_sector_rankings:
             self._get_sector_rankings(overview)
+
+        # 4. 获取指数 PE-TTM 估值（仅 A 股）
+        if self.region == "cn":
+            self._get_index_pe_ttm(overview)
         
-        # 4. 获取北向资金（可选）
+        # 5. 获取北向资金（可选）
         # self._get_north_flow(overview)
         
         return overview
@@ -388,6 +395,19 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
 
         except Exception as e:
             logger.error(f"[大盘] 获取板块涨跌榜失败: {e}")
+
+    def _get_index_pe_ttm(self, overview: MarketOverview):
+        """获取主要指数 PE-TTM 估值"""
+        try:
+            logger.info("[大盘] 获取指数 PE-TTM 估值...")
+            pe_data = self.data_manager.get_index_pe_ttm()
+            if pe_data:
+                overview.index_pe_ttm = pe_data
+                logger.info(f"[大盘] 获取到 {len(pe_data)} 个指数 PE-TTM")
+            else:
+                logger.warning("[大盘] 未获取到指数 PE-TTM 数据")
+        except Exception as e:
+            logger.error(f"[大盘] 获取指数 PE-TTM 失败: {e}")
     
     # def _get_north_flow(self, overview: MarketOverview):
     #     """获取北向资金流入"""
@@ -490,6 +510,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         # Build data blocks
         stats_block = self._build_stats_block(overview)
         indices_block = self._build_indices_block(overview)
+        pe_ttm_block = self._build_pe_ttm_summary(overview)
         sector_block = self._build_sector_block(overview)
         news_block = self._build_news_block(news or [])
         patterns = (
@@ -510,6 +531,13 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                 review,
                 patterns["index_commentary"],
                 indices_block,
+            )
+
+        if pe_ttm_block:
+            review = self._insert_after_section(
+                review,
+                patterns["index_commentary"],
+                pe_ttm_block,
             )
 
         if sector_block:
@@ -671,25 +699,82 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         """构建指数行情表格"""
         if not overview.indices:
             return ""
+        has_pe = bool(overview.index_pe_ttm)
         if self._get_review_language() == "en":
-            lines = [
-                f"| Index | Last | Change % | Open | High | Low | Amplitude | Turnover ({self._get_turnover_unit_label()}) |",
-                "|-------|------|----------|------|------|-----|-----------|-----------------|",
-            ]
+            if has_pe:
+                lines = [
+                    f"| Index | Last | Change % | Open | High | Low | Amplitude | Turnover ({self._get_turnover_unit_label()}) | PE-TTM |",
+                    "|-------|------|----------|------|------|-----|-----------|-----------------|--------|",
+                ]
+            else:
+                lines = [
+                    f"| Index | Last | Change % | Open | High | Low | Amplitude | Turnover ({self._get_turnover_unit_label()}) |",
+                    "|-------|------|----------|------|------|-----|-----------|-----------------|",
+                ]
         else:
-            lines = [
-                "| 指数 | 最新 | 涨跌幅 | 开盘 | 最高 | 最低 | 振幅 | 成交额(亿) |",
-                "|------|------|--------|------|------|------|------|-----------|",
-            ]
+            if has_pe:
+                lines = [
+                    "| 指数 | 最新 | 涨跌幅 | 开盘 | 最高 | 最低 | 振幅 | 成交额(亿) | PE-TTM |",
+                    "|------|------|--------|------|------|------|------|-----------|--------|",
+                ]
+            else:
+                lines = [
+                    "| 指数 | 最新 | 涨跌幅 | 开盘 | 最高 | 最低 | 振幅 | 成交额(亿) |",
+                    "|------|------|--------|------|------|------|------|-----------|",
+                ]
         for idx in overview.indices:
             arrow = self._get_index_change_arrow(idx.change_pct)
             amount_raw = idx.amount or 0.0
             amount_str = self._format_turnover_value(amount_raw)
-            lines.append(
+            # 获取 PE-TTM（匹配指数代码，去掉 sh/sz 前缀）
+            idx_code_clean = idx.code.replace("sh", "").replace("sz", "") if idx.code else ""
+            pe_val = overview.index_pe_ttm.get(idx_code_clean)
+            pe_str = f"{pe_val:.2f}" if pe_val else "-"
+            row = (
                 f"| {idx.name} | {idx.current:.2f} | {arrow} {idx.change_pct:+.2f}% | "
                 f"{self._format_optional_number(idx.open)} | {self._format_optional_number(idx.high)} | "
                 f"{self._format_optional_number(idx.low)} | {self._format_optional_pct(idx.amplitude)} | {amount_str} |"
             )
+            if has_pe:
+                row += f" {pe_str} |"
+            lines.append(row)
+        return "\n".join(lines)
+
+    def _build_pe_ttm_summary(self, overview: MarketOverview) -> str:
+        """构建 PE-TTM 估值简要总结"""
+        if not overview.index_pe_ttm:
+            return ""
+        # 选取关键宽基指数展示
+        key_indices = [
+            ("000300", "沪深300"),
+            ("000905", "中证500"),
+            ("000852", "中证1000"),
+            ("000922", "中证红利"),
+            ("000510", "中证A500"),
+        ]
+        lines = ["#### 主要宽基指数估值（PE-TTM）"]
+        lines.append("| 指数 | PE-TTM |")
+        lines.append("|------|--------|")
+        has_data = False
+        for code, name in key_indices:
+            pe_val = overview.index_pe_ttm.get(code)
+            if pe_val:
+                lines.append(f"| {name} | {pe_val:.2f} |")
+                has_data = True
+        # 也加上其他有数据的指数
+        shown_codes = {c for c, _ in key_indices}
+        for code, pe_val in overview.index_pe_ttm.items():
+            if code not in shown_codes and pe_val:
+                # 从 overview.indices 中找名称
+                idx_name = next(
+                    (idx.name for idx in overview.indices
+                     if idx.code.replace("sh", "").replace("sz", "") == code),
+                    code,
+                )
+                lines.append(f"| {idx_name} | {pe_val:.2f} |")
+                has_data = True
+        if not has_data:
+            return ""
         return "\n".join(lines)
 
     def _build_sector_block(self, overview: MarketOverview) -> str:
@@ -872,7 +957,10 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         indices_text = ""
         for idx in overview.indices:
             direction = "↑" if idx.change_pct > 0 else "↓" if idx.change_pct < 0 else "-"
-            indices_text += f"- {idx.name}: {idx.current:.2f} ({direction}{abs(idx.change_pct):.2f}%)\n"
+            idx_code_clean = idx.code.replace("sh", "").replace("sz", "") if idx.code else ""
+            pe_val = overview.index_pe_ttm.get(idx_code_clean)
+            pe_info = f" | PE-TTM: {pe_val:.2f}" if pe_val else ""
+            indices_text += f"- {idx.name}: {idx.current:.2f} ({direction}{abs(idx.change_pct):.2f}%){pe_info}\n"
         
         # 板块信息
         top_sectors_text = ", ".join([f"{s['name']}({s['change_pct']:+.2f}%)" for s in overview.top_sectors[:3]])
@@ -985,7 +1073,7 @@ Lagging: {bottom_sectors_text if bottom_sectors_text else "N/A"}"""
 (2-3 sentences summarizing overall market tone, index moves, and liquidity.)
 
 ### 2. Index Commentary
-({self._get_index_hint()})
+({self._get_index_hint()}; include a brief PE-TTM valuation comment for major indices)
 
 ### 3. Fund Flows
 (Interpret what turnover, participation, and flow signals imply.)
@@ -1051,7 +1139,7 @@ Output the report content directly, no extra commentary.
 （2-3句话概括指数、涨跌家数、成交额和情绪温度，明确“强势/偏暖/震荡/偏弱”判断）
 
 ### 二、指数结构
-（{self._get_index_hint()}，说明谁在护盘、谁在拖累，以及关键支撑/压力）
+（{self._get_index_hint()}，说明谁在护盘、谁在拖累，关键支撑/压力，并结合 PE-TTM 简要点评当前估值水平）
 
 ### 三、板块主线
 （分析领涨/领跌板块背后的逻辑、持续性和是否形成主线）
@@ -1104,7 +1192,10 @@ Output the report content directly, no extra commentary.
         indices_text = ""
         for idx in overview.indices[:4]:
             direction = "↑" if idx.change_pct > 0 else "↓" if idx.change_pct < 0 else "-"
-            indices_text += f"- **{idx.name}**: {idx.current:.2f} ({direction}{abs(idx.change_pct):.2f}%)\n"
+            idx_code_clean = idx.code.replace("sh", "").replace("sz", "") if idx.code else ""
+            pe_val = overview.index_pe_ttm.get(idx_code_clean)
+            pe_info = f" | PE-TTM: {pe_val:.2f}" if pe_val else ""
+            indices_text += f"- **{idx.name}**: {idx.current:.2f} ({direction}{abs(idx.change_pct):.2f}%){pe_info}\n"
         
         # 板块信息
         separator = ", " if template_language == "en" else "、"
@@ -1166,6 +1257,8 @@ Market conditions can change quickly. The data above is for reference only and d
 
 ### 二、指数结构
 {indices_block or indices_text or "暂无指数数据。"}
+
+{self._build_pe_ttm_summary(overview)}
 
 ### 三、板块主线
 {sector_block or "- 暂无板块涨跌榜数据。"}

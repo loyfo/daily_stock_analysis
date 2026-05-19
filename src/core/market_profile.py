@@ -35,7 +35,7 @@ CN_PROFILE = MarketProfile(
         "股市 行情 分析",
         "A股 市场 热点 板块",
     ],
-    prompt_index_hint="分析上证、深证、创业板等各指数走势特点",
+    prompt_index_hint="分析上证、深证、创业板、沪深300、中证500、中证1000、中证红利、中证A500等各指数走势特点及估值水平",
     has_market_stats=True,
     has_sector_rankings=True,
 )

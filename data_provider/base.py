@@ -313,6 +313,15 @@ class BaseFetcher(ABC):
         """
         return None
 
+    def get_index_pe_ttm(self) -> Optional[Dict[str, float]]:
+        """
+        获取主要指数 PE-TTM 估值数据
+
+        Returns:
+            Dict[str, float]: 指数代码 -> PE-TTM
+        """
+        return None
+
     def get_sector_rankings(self, n: int = 5) -> Optional[Tuple[List[Dict], List[Dict]]]:
         """
         获取板块涨跌榜
@@ -1846,6 +1855,19 @@ class DataFetcherManager:
                     return data
             except Exception as e:
                 logger.warning(f"[{fetcher.name}] 获取市场统计失败: {e}")
+                continue
+        return {}
+
+    def get_index_pe_ttm(self) -> Dict[str, float]:
+        """获取主要指数 PE-TTM 估值数据（自动切换数据源）"""
+        for fetcher in self._fetchers:
+            try:
+                data = fetcher.get_index_pe_ttm()
+                if data:
+                    logger.info(f"[{fetcher.name}] 获取指数 PE-TTM 成功")
+                    return data
+            except Exception as e:
+                logger.warning(f"[{fetcher.name}] 获取指数 PE-TTM 失败: {e}")
                 continue
         return {}
 
